@@ -122,8 +122,8 @@ def save_to_mongodb(articles):
                 upsert=True
             )
         st.success(f"Saved {len(articles)} articles to MongoDB (avoiding duplicates)")
-    except Exception as e:
-        st.error(f"Error saving to MongoDB: {e}")
+    # except Exception as e:
+    #     st.error(f"Error saving to MongoDB: {e}")
 
 def visualize_data():
     data = list(collection.find())
