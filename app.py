@@ -13,10 +13,29 @@ import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 
-# MongoDB connection
-client = pymongo.MongoClient("mongodb://localhost:27017/")
-db = client["news_db"]
-collection = db["ballet_articles"]
+# Setup MongoDB dengan timeout dan pengecekan ping
+try:
+    mongo_uri = st.secrets["mongo"]["uri"]
+    client = pymongo.MongoClient(
+        mongo_uri,
+        serverSelectionTimeoutMS=5000  # timeout 5 detik
+    )
+    client.admin.command('ping')  # ping untuk cek koneksi
+    st.success("✔️ Koneksi ke MongoDB Atlas berhasil")
+except Exception as e:
+    # Tampilkan error lengkap untuk debug
+    st.error(f"❌ Gagal koneksi ke MongoDB Atlas:\n{e}")
+    st.stop()  # hentikan eksekusi aplikasi jika koneksi gagal
+
+db = client["BIGDATA"]
+collection = db["ballet"]
+
+# Buat index unik pada field 'link', tangani jika gagal
+try:
+    idx_name = collection.create_index("link", unique=True)
+    st.info(f"✔️ Index unik pada 'link' berhasil dibuat (name: {idx_name})")
+except Exception as e:
+    st.warning(f"⚠️ Gagal membuat index unik pada 'link':\n{e}")
 
 # Custom ballet-related vocabulary (feel free to expand this)
 ballet_vocabulary = {
