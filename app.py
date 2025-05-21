@@ -16,16 +16,12 @@ from nltk.tokenize import word_tokenize
 # Setup MongoDB dengan timeout dan pengecekan ping
 try:
     mongo_uri = st.secrets["mongo"]["uri"]
-    client = pymongo.MongoClient(
-        mongo_uri,
-        serverSelectionTimeoutMS=5000  # timeout 5 detik
-    )
-    client.admin.command('ping')  # ping untuk cek koneksi
+    client = pymongo.MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+    client.admin.command('ping')  # cek koneksi
     st.success("✔️ Koneksi ke MongoDB Atlas berhasil")
 except Exception as e:
-    # Tampilkan error lengkap untuk debug
     st.error(f"❌ Gagal koneksi ke MongoDB Atlas:\n{e}")
-    st.stop()  # hentikan eksekusi aplikasi jika koneksi gagal
+    st.stop()
 
 db = client["BIGDATA"]
 collection = db["ballet"]
