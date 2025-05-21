@@ -6,12 +6,13 @@ from bs4 import BeautifulSoup
 import pandas as pd
 from datetime import datetime
 import pymongo
-import schedule
-import time
+from pymongo.errors import BulkWriteError
 import plotly.express as px
 import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
+
+# Pastikan nltk stopwords dan punkt sudah terunduh
+nltk.download('stopwords')
+nltk.download('punkt')
 
 # Setup MongoDB dengan timeout dan pengecekan ping
 try:
@@ -26,14 +27,42 @@ except Exception as e:
 db = client["bigdata"]
 collection = db["ballet"]
 
-# Buat index unik pada field 'link', tangani jika gagal
+# Hapus duplikat berdasarkan field 'link' agar bisa buat index unik
+def remove_duplicates():
+    pipeline = [
+        {
+            "$group": {
+                "_id": "$link",
+                "ids": {"$addToSet": "$_id"},
+                "count": {"$sum": 1}
+            }
+        },
+        {
+            "$match": {
+                "count": {"$gt": 1}
+            }
+        }
+    ]
+    duplicates = list(collection.aggregate(pipeline))
+    total_deleted = 0
+    for doc in duplicates:
+        ids_to_delete = doc["ids"][1:]  # sisakan 1 dokumen
+        result = collection.delete_many({"_id": {"$in": ids_to_delete}})
+        total_deleted += result.deleted_count
+    return total_deleted
+
+deleted_count = remove_duplicates()
+if deleted_count > 0:
+    st.info(f"🗑️ Menghapus {deleted_count} dokumen duplikat berdasarkan 'link'")
+
+# Buat index unik pada field 'link'
 try:
     idx_name = collection.create_index("link", unique=True)
     st.info(f"✔️ Index unik pada 'link' berhasil dibuat (name: {idx_name})")
 except Exception as e:
     st.warning(f"⚠️ Gagal membuat index unik pada 'link':\n{e}")
 
-# Custom ballet-related vocabulary (feel free to expand this)
+# Kosakata balet khusus
 ballet_vocabulary = {
     'ballet', 'dancer', 'dance', 'performance', 'rehearsal', 'choreography', 'balletic', 'pirouette',
     'ballerina', 'balletschool', 'balletcompany', 'pas', 'tendu', 'arabesque', 'pointe', 'pas de deux',
@@ -45,17 +74,17 @@ ballet_vocabulary = {
     'pas ballerina', 'karya balet'
 }
 
-# Additional stopwords (standard plus any other words you don't want to include)
-stop_words = {
+# Stopwords tambahan bahasa Indonesia
+stop_words = set(nltk.corpus.stopwords.words('indonesian')).union({
     'yang', 'di', 'ke', 'dari', 'pada', 'dalam', 'untuk', 'dengan', 'dan', 'atau',
     'ini', 'itu', 'juga', 'sudah', 'saya', 'anda', 'dia', 'mereka', 'kita', 'akan',
     'bisa', 'ada', 'tidak', 'saat', 'oleh', 'setelah', 'para', 'seperti', 'saat',
     'bagi', 'serta', 'tapi', 'lain', 'sebuah', 'karena', 'ketika', 'jika', 'apa',
     'seorang', 'tentang', 'dalam', 'bisa', 'sementara', 'dilakukan', 'setelah',
-    'yakni', 'menurut', 'hampir', 'dimana', 'bagaimana', 'selama', 'sebelum', 
+    'yakni', 'menurut', 'hampir', 'dimana', 'bagaimana', 'selama', 'sebelum',
     'hingga', 'kepada', 'sebagai', 'masih', 'hal', 'sempat', 'sedang', 'selain',
     'sembari', 'mendapat', 'sedangkan', 'tetapi', 'membuat', 'namun', 'gimana'
-}
+})
 
 def scrape_detik():
     articles = []
@@ -63,21 +92,21 @@ def scrape_detik():
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
-    
     try:
         response = requests.get(base_url, headers=headers)
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        articles_container = soup.find_all('article')
+        # Sesuaikan selector sesuai struktur halaman Detik terbaru
+        articles_container = soup.find_all('div', class_='list-content__item')
         
         for article in articles_container:
             try:
-                title_element = article.find('h2', class_='title')
-                link_element = article.find('a')
-                date_element = article.find('span', class_='date')
-                category_element = article.find('span', class_='category')
+                title_element = article.find('a', class_='media__title')
+                link_element = title_element
+                date_element = article.find('span', class_='media__date')
+                category_element = article.find('div', class_='media__category')
                 
-                if all([title_element, link_element, date_element]):
+                if title_element and link_element and date_element:
                     title = title_element.text.strip()
                     link = link_element['href']
                     date = date_element.text.strip()
@@ -91,121 +120,89 @@ def scrape_detik():
                         'category': category,
                         'scraped_at': datetime.now()
                     })
-                    
             except Exception as e:
                 st.write(f"Error parsing article: {str(e)}")
                 continue
-            
         st.success(f"Found {len(articles)} articles from Detik")
-            
     except Exception as e:
         st.error(f"Error scraping Detik: {str(e)}")
-    
     return articles
 
 def save_to_mongodb(articles):
+    if not articles:
+        st.warning("No articles to save")
+        return
     try:
-        if not articles:
-            st.warning("No articles to save")
-            return
-            
-        collection.insert_many(articles)
-        st.success(f"Saved {len(articles)} articles to MongoDB")
+        for article in articles:
+            collection.update_one(
+                {"link": article["link"]},
+                {"$setOnInsert": article},
+                upsert=True
+            )
+        st.success(f"Saved {len(articles)} articles to MongoDB (avoiding duplicates)")
     except Exception as e:
         st.error(f"Error saving to MongoDB: {str(e)}")
 
 def visualize_data():
-    # Fetch data from MongoDB
     data = list(collection.find())
     df = pd.DataFrame(data)
     
-    if len(df) == 0:
+    if df.empty:
         st.warning("No data available for visualization")
         return
     
-    # Convert dates
     df['scraped_at'] = pd.to_datetime(df['scraped_at'])
     df['year'] = df['scraped_at'].dt.year.astype(int)
     df['month'] = df['scraped_at'].dt.month
     
-    # Filtering by source with a unique key for the multiselect widget
     sources = df['source'].unique()
-    selected_source = st.multiselect('Select Sources', sources, default=sources, key="source_selection")  # Added a unique key
+    selected_source = st.multiselect('Select Sources', sources, default=sources, key="source_selection")
     filtered_df = df[df['source'].isin(selected_source)]
     
-    # 1. Number of articles by source
     st.subheader("1. Number of Articles by Source")
     source_counts = filtered_df['source'].value_counts()
     fig1 = px.bar(source_counts, title='Total Articles by Source')
     st.plotly_chart(fig1)
     
-    # 2. Yearly trends
     st.subheader("2. Yearly Trends")
-
-# Agregasi data hanya berdasarkan tahun
-    yearly_data = filtered_df.groupby('year').size().reset_index(name='count')  # Defining yearly_data without source
-    yearly_data['year'] = yearly_data['year'].astype(int)  # Ensuring year is an integer
-
-# Create the bar chart
+    yearly_data = filtered_df.groupby('year').size().reset_index(name='count')
+    yearly_data['year'] = yearly_data['year'].astype(int)
     fig2 = px.bar(yearly_data, x='year', y='count', title='Articles by Year')
-
-# Update x-axis to format years without decimals and as integers
     fig2.update_xaxes(tickmode='array', tickvals=yearly_data['year'].unique())
-
-# Display the chart
     st.plotly_chart(fig2)
-
-
-    # 3. Monthly trends for selected year using bar chart
+    
     st.subheader("3. Monthly Trends for Selected Year")
-    selected_year = st.selectbox('Select Year for Monthly Breakdown', sorted(df['year'].unique()), key="year_selection")  # Added a unique key
+    selected_year = st.selectbox('Select Year for Monthly Breakdown', sorted(df['year'].unique()), key="year_selection")
     monthly_data = filtered_df[filtered_df['year'] == selected_year].groupby(['month', 'source']).size().reset_index(name='count')
     monthly_data['month'] = pd.to_datetime(monthly_data['month'], format='%m').dt.strftime('%B')
-    
-    # Creating a bar chart for monthly trends
-    fig3 = px.bar(monthly_data, x='month', y='count', color='source',
-                  title=f'Monthly Articles in {selected_year}')
+    fig3 = px.bar(monthly_data, x='month', y='count', color='source', title=f'Monthly Articles in {selected_year}')
     st.plotly_chart(fig3)
-    # 4. Word frequency analysis as word cloud
-    st.subheader("4. Most Common Words - Bar Chart & Word Cloud")
     
+    st.subheader("4. Most Common Words - Bar Chart & Word Cloud")
     try:
-        # Process text
         all_words = []
         for title in filtered_df['title']:
-            # Convert to lowercase and split by spaces
             words = title.lower().split()
-            # Clean words and filter stopwords and non-ballet-related words
             words = [word.strip('.,!?()[]{}:;"\'') for word in words]
             words = [word for word in words if word and word not in stop_words and word in ballet_vocabulary]
             all_words.extend(words)
         
         if all_words:
-            # Create a word cloud
             wordcloud = WordCloud(width=800, height=400, background_color='black').generate(' '.join(all_words))
-            
-            # Display the word cloud
-            plt.figure(figsize=(10, 5))
+            plt.figure(figsize=(10,5))
             plt.imshow(wordcloud, interpolation='bilinear')
-            plt.axis('off')  # Hide the axes
+            plt.axis('off')
             st.pyplot(plt)
             
-            # Bar Chart for Most Common Words
             st.subheader("5. Most Common Words - Bar Chart")
             word_freq = pd.Series(all_words).value_counts().head(15)
-            fig4 = px.bar(
-                word_freq, 
-                title='Most Common Words in Titles',
-                labels={'index': 'Word', 'value': 'Frequency'}
-            )
+            fig4 = px.bar(word_freq, title='Most Common Words in Titles', labels={'index':'Word', 'value':'Frequency'})
             st.plotly_chart(fig4)
         else:
             st.warning("No words to analyze after filtering")
-            
     except Exception as e:
         st.error(f"Error in word frequency analysis: {str(e)}")
-
-    # 5. Data tables by source
+    
     st.subheader("5. Article Details")
     for source in selected_source:
         st.write(f"\n**{source} Articles**")
@@ -215,7 +212,10 @@ def visualize_data():
 def main():
     st.title("Ballet News Scraper")
     
-    # Main content
+    if st.button("Scrape & Save Latest Articles"):
+        articles = scrape_detik()
+        save_to_mongodb(articles)
+    
     tab1, tab2 = st.tabs(["Recent Articles", "Visualizations"])
     
     with tab1:
@@ -223,7 +223,7 @@ def main():
         articles = list(collection.find().sort('scraped_at', -1).limit(10))
         for article in articles:
             st.write(f"**{article['title']}**")
-            st.write(f"Date: {article['date']} | Category: {article['category']}") 
+            st.write(f"Date: {article['date']} | Category: {article['category']}")
             st.write(f"[Read more]({article['link']})")
             st.markdown("---")
     
