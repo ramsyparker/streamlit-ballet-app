@@ -23,7 +23,7 @@ except Exception as e:
     st.error(f"❌ Gagal koneksi ke MongoDB Atlas:\n{e}")
     st.stop()
 
-db = client["BIGDATA"]
+db = client["bigdata"]
 collection = db["ballet"]
 
 # Buat index unik pada field 'link', tangani jika gagal
