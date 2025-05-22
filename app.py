@@ -27,29 +27,29 @@ db = client["bigdata"]
 collection = db["ballet"]
 
 # Hapus duplikat berdasarkan link
-# def remove_duplicates():
-#     pipeline = [
-#         {"$group": {"_id": "$link", "ids": {"$addToSet": "$_id"}, "count": {"$sum": 1}}},
-#         {"$match": {"count": {"$gt": 1}}}
-#     ]
-#     duplicates = list(collection.aggregate(pipeline))
-#     total_deleted = 0
-#     for doc in duplicates:
-#         ids_to_delete = doc["ids"][1:]
-#         result = collection.delete_many({"_id": {"$in": ids_to_delete}})
-#         total_deleted += result.deleted_count
-#     return total_deleted
+def remove_duplicates():
+    pipeline = [
+        {"$group": {"_id": "$link", "ids": {"$addToSet": "$_id"}, "count": {"$sum": 1}}},
+        {"$match": {"count": {"$gt": 1}}}
+    ]
+    duplicates = list(collection.aggregate(pipeline))
+    total_deleted = 0
+    for doc in duplicates:
+        ids_to_delete = doc["ids"][1:]
+        result = collection.delete_many({"_id": {"$in": ids_to_delete}})
+        total_deleted += result.deleted_count
+    return total_deleted
 
-# deleted_count = remove_duplicates()
-# if deleted_count > 0:
-#     st.info(f"🗑️ Menghapus {deleted_count} data duplikat berdasarkan link")
+deleted_count = remove_duplicates()
+if deleted_count > 0:
+    st.info(f"🗑️ Menghapus {deleted_count} data duplikat berdasarkan link")
 
-# # Buat index unik pada field 'link'
-# try:
-#     idx_name = collection.create_index("link", unique=True)
-#     st.info(f"✔️ Index unik pada 'link' berhasil dibuat ({idx_name})")
-# except Exception as e:
-#     st.warning(f"⚠️ Gagal membuat index unik pada 'link': {e}")
+# Buat index unik pada field 'link'
+try:
+    idx_name = collection.create_index("link", unique=True)
+    st.info(f"✔️ Index unik pada 'link' berhasil dibuat ({idx_name})")
+except Exception as e:
+    st.warning(f"⚠️ Gagal membuat index unik pada 'link': {e}")
 
 ballet_vocabulary = {
     # (Isi seperti kode sebelumnya)
@@ -122,8 +122,8 @@ def save_to_mongodb(articles):
                 upsert=True
             )
         st.success(f"Saved {len(articles)} articles to MongoDB (avoiding duplicates)")
-    # except Exception as e:
-    #     st.error(f"Error saving to MongoDB: {e}")
+    except Exception as e:
+        st.error(f"Error saving to MongoDB: {e}")
 
 def visualize_data():
     data = list(collection.find())
