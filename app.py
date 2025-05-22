@@ -23,7 +23,7 @@ except Exception as e:
     st.error(f"❌ Gagal koneksi ke MongoDB Atlas:\n{e}")
     st.stop()
 
-db = client["bigdata"]
+db = client["BIGDATA"]
 collection = db["ballet"]
 
 # Custom ballet-related vocabulary (feel free to expand this)
